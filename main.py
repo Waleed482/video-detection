@@ -204,6 +204,13 @@ class GestureDetector:
         with self.lock:
             return self.landmarks_result
 
+    def clear_gesture(self):
+            """Clear the current gesture."""
+            with self.lock:
+                self.current_gesture = "No gesture detected"
+                self.landmarks_result = None
+                print("Gesture cleared")        
+
     def stop(self):
         self.running = False
         self.thread.join()
@@ -247,6 +254,7 @@ def main():
         speech_queue.add_speech("I'm having trouble accessing the camera. Please check if it's properly connected.")
         return
 
+    is_system_activated = False  
     is_assistance_enabled = True
     frame_count = 0
     prev_time = time.time()
@@ -270,10 +278,15 @@ def main():
             frame_count += 1
 
             # Store frame every 5 frames to reduce database load
-            # if frame_count % 5 == 0:
+         
             if frame_count % 5 == 0:
                 timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 frame_storage.store_frame(frame, timestamp)
+            #to store 2 frames in second
+            # if frame_count % 30 == 0:
+            #     timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            #     frame_storage.store_frame(frame, timestamp)
+            #     logger.info(f"Stored frame {frame_count} at {timestamp}")
 
             # Update gesture detection every 3 frames
             if frame_count % 3 == 0:
@@ -288,67 +301,53 @@ def main():
             # Process gesture recognition
             current_gesture = gesture_detector.get_gesture()
 
-            # Handle stop gesture for report
-            # if "stop" in current_gesture.lower():
-            #     current_time = time.time()
-            #     if current_time - last_report_time >= report_cooldown:
-            #         latest_description, timestamp = description_storage.get_latest_description()
-            #         if latest_description:
-            #             report_msg = f"Here's the latest report from {timestamp}: {latest_description}"
-            #             speech_queue.add_speech(report_msg)
-            #         else:
-            #             speech_queue.add_speech("No previous descriptions are available.")
-            #         last_report_time = current_time
-            #     # Resume SpeechHandler listening if it was paused
-            #     speech_handler.resume_listening()
+            if not is_system_activated:
+                speech_handler.resume_listening()
+                if speech_handler.check_for_activation():
+                    is_system_activated = True
+                    speech_queue.add_speech("Assistant activated. You can now use descriptions and rock gesture date queries.")
+                    print("System activated")
+                    speech_handler.clear_speech_text()  
 
-
-            if "rock" in current_gesture.lower():
-                current_time = time.time()
-                if current_time - last_stop_time >= stop_cooldown:
-                    if not waiting_for_date:
-                        # Pause SpeechHandler listening to focus on date input
-                        speech_handler.pause_listening()
-                        # Start listening for the date
+            # System functionality only if activated
+            if is_system_activated:
+                if "rock" in current_gesture and not waiting_for_date:
+                    current_time = time.time()
+                    if current_time - last_stop_time >= stop_cooldown:
                         waiting_for_date = True
                         date_query_start_time = current_time
-                        print("Detected stop gesture. Waiting for date input...")
-                    last_stop_time = current_time
+                        speech_handler.pause_listening()
+                        speech_handler.clear_speech_text()  
+                        print("Detected rock gesture. Waiting for date input...")
+                        
+                        # Process date input once
+                        user_provided_date = None
+                        spoken_text = listen_for_date(speech_queue, speech_handler)
+                        if spoken_text:
+                            print(f"You said: {spoken_text}")
+                            user_provided_date = parse_spoken_date(spoken_text, speech_queue)
+                            if user_provided_date:
+                                print(f"Parsed date: {user_provided_date}")
+                                fetch_descriptions_for_date(user_provided_date, speech_queue, db_path, conn)
+                        else:
+                            speech_queue.add_speech("I didn't hear a date. Please try the stop gesture again.")
+                            print("No date heard.")
+                        
+                        # Reset state, clear gesture, and resume listening
+                        waiting_for_date = False
+                        date_query_start_time = None
+                        speech_handler.clear_speech_text()  
+                        gesture_detector.clear_gesture()  
+                        speech_handler.resume_listening()
+                        last_stop_time = current_time
 
-            # Process date input if waiting
-            if waiting_for_date:
-                # Initialize user_provided_date to None at the start of the block
-                user_provided_date = None
-                # Listen for the spoken date using SpeechHandler
-                spoken_text = listen_for_date(speech_queue, speech_handler)
-                if spoken_text:
-                    print(f"You said: {spoken_text}")
-                    user_provided_date = parse_spoken_date(spoken_text, speech_queue)
-                    if user_provided_date:
-                        print(f"Parsed date: {user_provided_date}")
-                        fetch_descriptions_for_date(user_provided_date, speech_queue, db_path, conn)
-                        waiting_for_date = False  # Reset after processing
-                    else:
-                        waiting_for_date = False  # Reset on failure
-                elif current_time - date_query_start_time >= date_query_timeout:
-                    speech_queue.add_speech("I didn't hear a date. Please try the stop gesture again.")
-                    print("No date heard within timeout.")
-                    waiting_for_date = False
-                    date_query_start_time = None
-                # Resume SpeechHandler listening after date query (success or timeout)
-                if not waiting_for_date:
+                if is_assistance_enabled:
                     speech_handler.resume_listening()
-
-            # Process caption and speech if enabled
-            if is_assistance_enabled:
-                speech_handler.resume_listening()
-
-                # Check for description commands
-                user_question = speech_handler.check_for_command()
-                if user_question:
-                    speech_handler.pause_listening()
-                    caption_gen.speak_description(user_question)
-                    speech_handler.resume_listening()
+                    user_question = speech_handler.check_for_command()
+                    if user_question:
+                        speech_handler.pause_listening()
+                        caption_gen.speak_description(user_question)
+                        speech_handler.resume_listening()
 
             # Get captions for display
             blip_caption = caption_gen.get_caption()

@@ -6,6 +6,7 @@ import sqlite3
 def listen_for_date(speech_queue, speech_handler):
     """Listen for the user's spoken date input using SpeechHandler and return the recognized text."""
     try:
+        speech_handler.clear_speech_text()
         speech_queue.add_speech("Please say the date like '10 April'.")
         
         # Ensure SpeechHandler is listening
@@ -21,12 +22,14 @@ def listen_for_date(speech_queue, speech_handler):
             # Check if the speech is a valid response (not the default message)
             if spoken_text and spoken_text != "System ready. Waiting for your command..." and "sorry" not in spoken_text.lower():
                 speech_handler.pause_listening()  # Pause listening after capturing the date
+                speech_handler.clear_speech_text()
                 return spoken_text
             time.sleep(0.1)  # Small sleep to avoid busy waiting
 
         # If no valid speech is captured within the timeout
         speech_queue.add_speech("I didn't hear a date. Please try again.")
         speech_handler.pause_listening()
+        speech_handler.clear_speech_text()
         return None
 
     except Exception as e:

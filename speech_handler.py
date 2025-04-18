@@ -64,11 +64,24 @@ class SpeechHandler:
     def get_speech_text(self):
         with self.lock:
             return self.current_speech_text
+        
+    def clear_speech_text(self):
+        """Clear the cached speech text."""
+        with self.lock:
+            self.current_speech_text = None
+            print("Speech text cleared")        
 
     def check_for_command(self):
         if not self.speech_queue.empty():
             return self.speech_queue.get_nowait()
         return None
+    
+    def check_for_activation(self):
+        """Check if the current speech text contains 'assistant'."""
+        with self.lock:
+            if self.current_speech_text and "assistant" in self.current_speech_text.lower():
+                return True
+        return False
 
     def pause_listening(self):
         self.is_listening = False
